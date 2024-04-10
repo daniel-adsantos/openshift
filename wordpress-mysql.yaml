@@ -1,0 +1,203 @@
+apiVersion: v1
+data:
+  WORDPRESS_USERNAME: admin
+  WORDPRESS_BLOG_NAME: Daniel Santos
+kind: ConfigMap
+metadata:
+  name: wordpress-param
+  labels:
+    app: wordpress
+---
+apiVersion: v1
+data:
+  hostname: wordpress-mysql
+  username: wp_user
+  database: wordpress
+kind: ConfigMap
+metadata:
+  name: mysql-param
+  labels:
+    app: wordpress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"StatefulSet","name":"wordpress-mysql"}]'
+  labels:
+    app: wordpress
+    app.kubernetes.io/part-of: wordpress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: frontend
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: frontend
+    spec:
+      containers:
+      - image: bitnami/wordpress:6
+        name: wordpress
+        env:
+        - name: WORDPRESS_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        - name: WORDPRESS_DATABASE_USER
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-param
+              key: username
+        - name: WORDPRESS_DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-param
+              key: database
+        - name: WORDPRESS_DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-param
+              key: hostname
+        envFrom:
+        - configMapRef:
+            name: wordpress-param
+        - secretRef:
+            name: wordpress-pass
+        ports:
+        - containerPort: 8080
+          name: wordpress
+        volumeMounts:
+        - mountPath: /var/www/html
+          name: html
+      volumes:
+      - name: html
+        emptyDir: {}
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: wordpress
+  labels:
+    app.kubernetes.io/part-of: wordpress
+spec:
+  path: /
+  to:
+    kind: Service
+    name: wordpress
+    weight: 100
+  port:
+    targetPort: http
+  wildcardPolicy: None
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wordpress-pass
+  labels:
+    app: wordpress
+type: Opaque
+data:
+  WORDPRESS_PASSWORD: YWRtaW4= 
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-pass
+  labels:
+    app: wordpress
+type: Opaque
+data:
+  password: UGFzc1dvcmQwMA==
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: wordpress
+    tier: frontend
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: wordpress
+    tier: db
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+    app.kubernetes.io/part-of: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: db
+  serviceName: "wordpress-mysql"
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: db
+    spec:
+      containers:
+      - image: mysql:5.6
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-param
+              key: username
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-param
+              key: database
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: data
+      volumes:
+      - name: data
+        emptyDir: {}
+
